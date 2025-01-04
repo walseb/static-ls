@@ -39,7 +39,9 @@
 
       devShells.default = pkgs.mkShell {
         buildInputs = with pkgs; [
-          pkgs.haskell.packages.${pkgs.ghcVersion}.haskell-language-server # you must build it with your ghc to work
+          # pkgs.haskell.packages.${pkgs.ghcVersion}.haskell-language-server # you must build it with your ghc to work
+          haskell.compiler.ghc98
+          # haskell.compiler.ghc963
           haskellPackages.fourmolu
           haskellPackages.hiedb
           sqlite
