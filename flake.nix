@@ -1,57 +1,36 @@
-# SPDX-FileCopyrightText: 2021 Serokell <https://serokell.io/>
-#
-# SPDX-License-Identifier: CC0-1.0
 {
-  description = "My haskell application";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs";
-    flake-utils.url = "github:numtide/flake-utils";
-  };
+  inputs =
+    {
+      nixpkgs-unstable.url = "nixpkgs/nixos-unstable";
+    };
 
-  outputs = {
-    self,
-    nixpkgs,
-    flake-utils,
-  }:
-    flake-utils.lib.eachDefaultSystem (system: let
-      # pkgs = nixpkgs.legacyPackages.${system};
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [
-          (import ./nix/overlays)
-        ];
-      };
-
-      #haskellPackages = pkgs.haskell.packages.ghc963;
-      haskellPackages = pkgs.haskellPackages;
-
-      jailbreakUnbreak = pkg:
-        pkgs.haskell.lib.doJailbreak (pkg.overrideAttrs (_: {meta = {};}));
-
-      packageName = "static-ls";
+  outputs = { self, nixpkgs, nixpkgs-unstable }:
+    let
+      pkgs = nixpkgs.legacyPackages.x86_64-linux.pkgs;
+      pkgs-unstable = nixpkgs-unstable.legacyPackages.x86_64-linux.pkgs;
     in {
-      packages.${packageName} = pkgs.haskell.lib.dontCheck (haskellPackages.callCabal2nix packageName self rec {
-        # Dependency overrides go here
-      });
-
-      packages.default = self.packages.${system}.${packageName};
-
-      devShells.default = pkgs.mkShell {
+      devShells.x86_64-linux.default = pkgs.mkShell {
         buildInputs = with pkgs; [
-          # pkgs.haskell.packages.${pkgs.ghcVersion}.haskell-language-server # you must build it with your ghc to work
+          # Liquid haskell
+          z3
+
+          zlib
+          # pkgs.haskell.compiler.ghc88
+          # haskell.compiler.ghc910
+          # haskell.compiler.ghc98
           haskell.compiler.ghc98
+          pkgs-unstable.cabal-install
+          hpack
+
           # haskell.compiler.ghc963
           haskellPackages.fourmolu
           haskellPackages.hiedb
           sqlite
           ghcid
-          cabal-install
           hpack
           alejandra
         ];
-        inputsFrom = [self.packages.${system}.${packageName}.env];
-        shellHook = "PS1=\"[static-ls:\\w]$ \"";
       };
-    });
+    };
 }
