@@ -51,13 +51,19 @@ instance Exception HieDbException
 data StaticEnv = StaticEnv
   { hieDbPath :: AbsPath
   -- ^ Path to the hiedb file
-  , hieFilesPath :: AbsPath
+  , hieDirs :: [AbsPath]
   , hiFilesPath :: AbsPath
   , wsRoot :: AbsPath
   , modelsFilesDir :: AbsPath
   -- ^ workspace root
-  , srcDirs :: [AbsPath]
-  -- ^ directories to search for source code in order of priority
+  , mutableSrcDirs :: [AbsPath]
+  -- ^ directories to search for source code in order of priority (mutable directories)
+  , immutableSrcDirs :: [AbsPath]
+  -- ^ directories to search for source code in order of priority (immutable directories)
+  , allSrcDirs :: [AbsPath]
+  -- ^ directories to search for source code in order of priority (muttable and imuttable directories)
+  , fourmoluCommand :: Maybe FilePath
+  -- ^ path to fourmolu binary
   }
 
 class (Monad m) => HasStaticEnv m where
@@ -78,17 +84,22 @@ runStaticEnv = flip runReaderT
 initStaticEnv :: AbsPath -> StaticEnvOptions -> IO StaticEnv
 initStaticEnv wsRoot staticEnvOptions = do
   let databasePath = wsRoot Path.</> (Path.filePathToRel staticEnvOptions.optionHieDbPath)
-      hieFilesPath = wsRoot Path.</> (Path.filePathToRel staticEnvOptions.optionHieFilesPath)
-      srcDirs = fmap ((wsRoot Path.</>) . Path.filePathToRel) (staticEnvOptions.optionSrcDirs)
+      hieDirs = fmap ((wsRoot Path.</>) . Path.filePathToRel) (staticEnvOptions.optionHieDirs)
+      mutableSrcDirs = fmap ((wsRoot Path.</>) . Path.filePathToRel) (staticEnvOptions.optionSrcDirs)
+      immutableSrcDirs = fmap ((wsRoot Path.</>) . Path.filePathToRel) (staticEnvOptions.optionImmutableSrcDirs)
+      allSrcDirs = mutableSrcDirs <> immutableSrcDirs
       hiFilesPath = wsRoot Path.</> (Path.filePathToRel staticEnvOptions.optionHiFilesPath)
   let serverStaticEnv =
         StaticEnv
           { hieDbPath = databasePath
-          , hieFilesPath = hieFilesPath
+          , hieDirs = hieDirs
           , hiFilesPath = hiFilesPath
           , wsRoot = wsRoot
           , modelsFilesDir = wsRoot Path.</> "config" Path.</> "modelsFiles"
-          , srcDirs = srcDirs
+          , mutableSrcDirs = mutableSrcDirs
+          , immutableSrcDirs = immutableSrcDirs
+          , allSrcDirs = allSrcDirs
+          , fourmoluCommand = staticEnvOptions.fourmoluCommand
           }
   pure serverStaticEnv
 

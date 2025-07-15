@@ -74,8 +74,10 @@ See [Advanced setup](docs/advanced-setup.md) for additional options
     - You may instead add the following to your `cabal.project.local` file:
       ```
       ignore-project: False
-      program-options:
+      program-options
         ghc-options:
+          -fwrite-ide-info
+          -hiedir .hiefiles
           -fdefer-type-errors
           -Werror=deferred-type-errors
           -Werror=deferred-out-of-scope-variables
@@ -88,11 +90,11 @@ See [Advanced setup](docs/advanced-setup.md) for additional options
       ```
 
     from your workspace root. If you're on an older version of `hiedb` where the `--src-base-dir` argument is not available use:
-    
+
       ```
         hiedb -D .hiedb index .hiefiles
       ```
-    
+
     if you want to let ghc handle this automatically on recompilation you can
     use the [ghc hiedb plugin](https://github.com/josephsumabat/hiedb-plugin).
     Using it alongside ghciwatch is generally recommended for a better UX.
@@ -145,6 +147,8 @@ to handle generating them.
 Other potential sources of static information include haddock files as an alternative to interface files for docs, ghcid and hlint output for diagnostics, and ctags for a backup jump
 to definition.
 Future features using existing static sources include auto import resolution code actions, autocomplete based on hiedb, and call heiarchy
+
+static-ls includes a `ghcid` subcommand which passes the appropriate flags to use ghcid as a source for diagnostics `static-ls ghcid -- -c 'cabal repl foo'`
 
 ## Limitations
 - Must be compiled on the same version of ghc as the project

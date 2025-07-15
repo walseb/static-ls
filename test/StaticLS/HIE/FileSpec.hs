@@ -48,15 +48,16 @@ spec = do
             hieFile <-
               runStaticEnv staticEnv $
                 runExceptT $
-                  getHieFileFromHiePath hiePath
+                  readHieFile (Path.toFilePath hiePath)
             _ <- assertEither hieFile
             pure ()
 
     let emptyOpts =
           StaticEnvOptions
             { optionHieDbPath = ""
-            , optionHieFilesPath = ""
+            , optionHieDirs = []
             , optionSrcDirs = []
+            , optionImmutableSrcDirs = []
             , optionHiFilesPath = ""
             , provideInlays = True
             , inlayLengthCap = Just 32

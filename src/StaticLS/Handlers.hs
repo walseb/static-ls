@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
 module StaticLS.Handlers where
 
 import Control.Lens.Operators
@@ -23,6 +25,7 @@ import Language.LSP.Server (
  )
 import Language.LSP.Server qualified as LSP
 import Language.LSP.VFS (VirtualFile (..))
+import StaticLS.GhcidSession
 import StaticLS.HIE.File qualified as HIE.File
 import StaticLS.IDE.CodeActions (getCodeActions)
 import StaticLS.IDE.CodeActions qualified as IDE.CodeActions
@@ -49,6 +52,7 @@ import StaticLS.StaticEnv.Options (StaticEnvOptions (..))
 import StaticLS.Utils
 import System.Directory (doesFileExist)
 import System.FSNotify qualified as FSNotify
+import Text.Parsec.Text qualified as Parsec
 import UnliftIO.Exception qualified as Exception
 
 -----------------------------------------------------------------
@@ -97,7 +101,6 @@ handleImplementationRequest = LSP.requestHandler LSP.SMethod_TextDocumentImpleme
 
 handleInlayHintRequest :: StaticEnvOptions -> Handlers (LspT c StaticLsM)
 handleInlayHintRequest options = LSP.requestHandler LSP.SMethod_TextDocumentInlayHint $ \req res -> do
-  lift $ logInfo "Received inlay hint request"
   let params = req._params
   path <- ProtoLSP.tdiToAbsPath params._textDocument
   inlayHints <- lift $ getInlayHints path options
@@ -243,14 +246,21 @@ handleResolveCodeAction = LSP.requestHandler LSP.SMethod_CodeActionResolve $ \re
 
 handleFormat :: Handlers (LspT c StaticLsM)
 handleFormat = LSP.requestHandler LSP.SMethod_TextDocumentFormatting $ \req res -> do
+  _ <- lift $ logInfo "handleFormat"
   let params = req._params
   let tdi = params._textDocument
   path <- ProtoLSP.tdiToAbsPath tdi
   sourceRope <- lift $ IDE.getSourceRope path
   source <- lift $ IDE.getSource path
-  edit <- IDE.Format.format path source
-  let textEdits = ProtoLSP.editToProto sourceRope edit
-  res $ Right $ InL textEdits
+  staticEnv <- lift StaticEnv.getStaticEnv
+  _ <- lift $ logInfo ("Using format command: " <> (T.pack $ show staticEnv.fourmoluCommand))
+  case staticEnv.fourmoluCommand of
+    Just fourmoluCommand -> do
+      edit <- IDE.Format.format path source fourmoluCommand
+      let textEdits = ProtoLSP.editToProto sourceRope edit
+      res $ Right $ InL textEdits
+    Nothing ->
+      res $ Right $ InL []
   pure ()
 
 handleCompletion :: Handlers (LspT c StaticLsM)
@@ -308,10 +318,22 @@ handleGhcidFileChange :: LspT c StaticLsM ()
 handleGhcidFileChange = do
   lift $ logInfo "handleGhcidFileChange"
   exists <- liftIO $ doesFileExist "ghcid.txt"
+  let ghcidSess = ".ghcid_session"
   Monad.when exists do
     contents <- liftIO $ T.IO.readFile "ghcid.txt"
     staticEnv <- lift StaticEnv.getStaticEnv
-    let diags = IDE.Diagnostics.ParseGHC.parse (staticEnv.wsRoot Path.</>) contents
+    ghcidSessExists <- liftIO $ doesFileExist ghcidSess
+    pathPrefix <-
+      if ghcidSessExists
+        then do
+          eghcid_session <- liftIO $ Parsec.parseFromFile parseGhcidSession ghcidSess
+          case eghcid_session of
+            Left e -> do
+              lift $ logInfo $ T.unwords ["could not parse ghcid_session", T.pack . show $ e]
+              pure (staticEnv.wsRoot Path.</>)
+            Right ghcid_session -> pure (ghcid_session.workingDirectory Path.</>)
+        else pure (staticEnv.wsRoot Path.</>)
+    let diags = IDE.Diagnostics.ParseGHC.parse pathPrefix contents
     lift $ logInfo $ "diags: " <> T.pack (show diags)
     clearDiagnostics
     sendDiagnostics Nothing diags

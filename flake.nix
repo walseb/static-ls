@@ -28,6 +28,7 @@
           haskellPackages.hiedb
           sqlite
           ghcid
+          cabal-install
           hpack
           alejandra
         ];

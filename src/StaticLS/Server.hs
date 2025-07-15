@@ -70,17 +70,34 @@ reactor chan lspEnv _logger = do
 fileWatcher :: Conc.Chan ReactorMsg -> StaticEnv -> LoggerM IO -> IO ()
 fileWatcher chan staticEnv _logger = do
   mgr <- FSNotify.startManager
+
   _stop <-
-    FSNotify.watchTree
+    FSNotify.watchDir
       mgr
-      (Path.toFilePath staticEnv.hieFilesPath)
-      (\e -> FilePath.takeExtension e.eventPath == ".hie")
-      ( \e -> Conc.writeChan chan $ ReactorMsgAct $ do
-          logInfo $ "File changed: " <> T.pack (show e)
-          Handlers.handleHieFileChangeEvent e
+      (Path.toFilePath staticEnv.wsRoot)
+      (\e -> FilePath.takeFileName e.eventPath == "ghcid.txt")
+      ( \e -> Conc.writeChan chan $ ReactorMsgLspAct $ do
+          lift $ logInfo $ "ghcid file changed: " <> T.pack (show e)
+          Handlers.handleGhcidFileChange
+          pure ()
       )
 
-  Foldable.for_ staticEnv.srcDirs \srcDir -> do
+  Foldable.for_ staticEnv.hieDirs \hieDir -> do
+    hieDir <- pure $ Path.toFilePath hieDir
+    exists <- Dir.doesDirectoryExist hieDir
+    Monad.when exists do
+      _stop <-
+        FSNotify.watchTree
+          mgr
+          hieDir
+          (\e -> FilePath.takeExtension e.eventPath == ".hie")
+          ( \e -> Conc.writeChan chan $ ReactorMsgAct $ do
+              logInfo $ "File changed: " <> T.pack (show e)
+              Handlers.handleHieFileChangeEvent e
+          )
+      pure ()
+
+  Foldable.for_ staticEnv.mutableSrcDirs \srcDir -> do
     srcDir <- pure $ Path.toFilePath srcDir
     exists <- Dir.doesDirectoryExist srcDir
     Monad.when exists do
@@ -94,17 +111,6 @@ fileWatcher chan staticEnv _logger = do
               Handlers.handleFileChangeEvent e
           )
       pure ()
-
-  _stop <-
-    FSNotify.watchDir
-      mgr
-      (Path.toFilePath staticEnv.wsRoot)
-      (\e -> FilePath.takeFileName e.eventPath == "ghcid.txt")
-      ( \e -> Conc.writeChan chan $ ReactorMsgLspAct $ do
-          lift $ logInfo $ "ghcid file changed: " <> T.pack (show e)
-          Handlers.handleGhcidFileChange
-          pure ()
-      )
 
   pure ()
 
@@ -163,7 +169,7 @@ initServer reactorChan staticEnvOptions logger serverConfig _ = do
 #endif
 
 serverDef :: StaticEnvOptions -> LoggerM IO -> IO (ServerDefinition ())
-serverDef argOptions logger = do
+serverDef options logger = do
   reactorChan <- liftIO Conc.newChan
   let
     -- TODO: actually respond to the client with an error
@@ -195,7 +201,7 @@ serverDef argOptions logger = do
       , configSection = ""
       , parseConfig = \_conf _value -> Right ()
       , doInitialize = do
-          initServer reactorChan argOptions logger
+          initServer reactorChan options logger
       , -- TODO: Do handlers need to inspect clientCapabilities?
         staticHandlers = \_clientCapabilities ->
           mapHandlers goReq goNot $
@@ -220,11 +226,13 @@ serverDef argOptions logger = do
                 , handleResolveCodeAction
                 , handleDocumentSymbols
                 , handleCompletion
-                , -- Currently disabled until we support configuration for the formatter
-                  -- , handleFormat
-                  handleCompletionItemResolve
+                , handleCompletionItemResolve
                 ]
-                  <> (if argOptions.provideInlays then [handleInlayHintRequest argOptions, handleResolveInlayHint] else [])
+                  <> (if options.provideInlays then [handleInlayHintRequest options, handleResolveInlayHint] else [])
+                  <> ( case options.fourmoluCommand of
+                        Just _ -> [handleFormat]
+                        Nothing -> []
+                     )
               )
       , interpretHandler = \env -> Iso (LSP.runLspT env) liftIO
       , options = lspOptions

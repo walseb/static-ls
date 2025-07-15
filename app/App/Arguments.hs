@@ -1,105 +1,135 @@
-module App.Arguments (execArgParser) where
+{-# LANGUAGE ApplicativeDo #-}
+
+module App.Arguments (
+  execArgParser,
+  handleParseResultWithSuppression,
+  PrgOptions (..),
+) where
 
 import Control.Applicative
+import Data.Maybe
 import Data.Version (showVersion)
 import Options.Applicative
 import Paths_static_ls (version)
 import StaticLS.StaticEnv.Options
 import System.Environment
 import System.Exit
-import Text.Parsec hiding (many, option)
+import Text.Parsec (alphaNum, char, runParser, sepEndBy)
 import Text.Read
 
 currVersion :: String
 currVersion = showVersion version
 
-data PrgOptions = PrgOptions
-  { staticEnvOpts :: StaticEnvOptions
-  , showVer :: Bool
-  , showHelp :: Bool
-  }
+data PrgOptions
+  = StaticLsOptions
+      { staticEnvOpts :: StaticEnvOptions
+      , showVer :: Bool
+      , showHelp :: Bool
+      }
+  | GHCIDOptions
+      { args :: [String]
+      }
 
 -- | Run an argument parser but suppress invalid arguments (simply running the server instead)
 -- Helpful for people on emacs or whose default configurations from HLS pass in
 -- unsupported arguments to static-ls
-execArgParser :: IO StaticEnvOptions
-execArgParser =
-  getArgs >>= handleParseResultWithSuppression . execParserPure defaultPrefs progParseInfo
- where
-  handleParseResultWithSuppression :: ParserResult PrgOptions -> IO StaticEnvOptions
-  handleParseResultWithSuppression (Success (PrgOptions {showHelp = True})) =
+execArgParser :: StaticEnvOptions -> IO (ParserResult PrgOptions)
+execArgParser defaultOpts =
+  execParserPure defaultPrefs (progParseInfo defaultOpts) <$> getArgs
+
+handleParseResultWithSuppression :: StaticEnvOptions -> ParserResult PrgOptions -> IO StaticEnvOptions
+handleParseResultWithSuppression defaultOpts res = case res of
+  Success (StaticLsOptions {showHelp = True}) -> do
     -- Get the help text (optparse-applicative usually shows the help text on error)
     handleParseResult . Failure $
-      parserFailure defaultPrefs progParseInfo (ShowHelpText Nothing) mempty
-  handleParseResultWithSuppression (Success (PrgOptions {showVer = True})) = do
+      parserFailure defaultPrefs (progParseInfo defaultOpts) (ShowHelpText Nothing) mempty
+  Success (StaticLsOptions {showVer = True}) -> do
     -- Show version info
     putStrLn $ "static-ls, version " <> currVersion
     exitSuccess
-  handleParseResultWithSuppression (Success a) = return a.staticEnvOpts
+  Success a -> return a.staticEnvOpts
   -- Ignore if invalid arguments are input
-  handleParseResultWithSuppression (Failure _) = return defaultStaticEnvOptions
-  handleParseResultWithSuppression (CompletionInvoked compl) = do
+  Failure _ -> return defaultOpts
+  CompletionInvoked compl -> do
     progn <- getProgName
     msg <- execCompletion compl progn
     putStr msg
     exitSuccess
 
-progParseInfo :: ParserInfo PrgOptions
-progParseInfo =
+progParseInfo :: StaticEnvOptions -> ParserInfo PrgOptions
+progParseInfo defaultOpts =
   info
-    (argParser <**> helper)
+    (argParser defaultOpts <**> helper)
     ( fullDesc
         <> progDesc "Run static-ls as a language server for a client to talk to"
         <> header "static-ls - a lightweight language server for haskell"
     )
 
-argParser :: Parser PrgOptions
-argParser =
-  PrgOptions
-    <$> staticEnvOptParser
-    <*> flag
-      False
-      True
-      ( long "version"
-          <> short 'v'
-          <> help "Show the program version"
-      )
-    <*> flag
-      False
-      True
-      ( long "help"
-          <> short 'h'
-      )
+argParser :: StaticEnvOptions -> Parser PrgOptions
+argParser defaultOpts =
+  staticLsParser
+    <|> subparser ghcidParser
+ where
+  ghcidParser =
+    command "ghcid" $
+      info
+        (GHCIDOptions <$> many (strArgument mempty))
+        ( progDesc "ghcid wrapper that gives static-ls extra information"
+            <> footer "example: static-ls ghcid -- -c 'cabal repl foo'"
+        )
+  staticLsParser =
+    StaticLsOptions
+      <$> staticEnvOptParser defaultOpts
+      <*> flag
+        False
+        True
+        ( long "version"
+            <> short 'v'
+            <> help "Show the program version"
+        )
+      <*> flag
+        False
+        True
+        ( long "help"
+            <> short 'h'
+        )
 
-staticEnvOptParser :: Parser StaticEnvOptions
-staticEnvOptParser =
+staticEnvOptParser :: StaticEnvOptions -> Parser StaticEnvOptions
+staticEnvOptParser defaultStaticEnvOptions =
   StaticEnvOptions
     <$> strOption
       ( long "hiedb"
           <> metavar "TARGET"
-          <> value defaultHieDb
+          <> value defaultStaticEnvOptions.optionHieDbPath
           <> help "Path to hiedb file produced by hiedb indexing hiefiles"
           <> showDefault
       )
-    <*> strOption
+    <*> listOption
       ( long "hiefiles"
-          <> metavar "TARGET"
-          <> value defaultHieFiles
+          <> metavar "TARGET1,TARGET2,TARGET3..."
+          <> value defaultStaticEnvOptions.optionHieDirs
           <> help "Path to hiefiles generated by -fwrite-ide-info and specified by -hiedir in ghc"
           <> showDefault
       )
     <*> strOption
       ( long "hifiles"
           <> metavar "TARGET"
-          <> value defaultHiFiles
+          <> value defaultStaticEnvOptions.optionHiFilesPath
           <> help "Path to hifiles specified by -hidir in ghc"
           <> showDefault
       )
     <*> listOption
       ( long "srcDirs"
           <> metavar "TARGET1,TARGET2,TARGET3..."
-          <> value defaultSrcDirs
+          <> value defaultStaticEnvOptions.optionSrcDirs
           <> help "Path to directories containing source code. Comma delimited strings"
+          <> showDefault
+      )
+    <*> listOption
+      ( long "immutableSrcDirs"
+          <> metavar "TARGET1,TARGET2,TARGET3..."
+          <> value defaultStaticEnvOptions.optionImmutableSrcDirs
+          <> help "Path to immutable directories containing source code. Directories are not watched. Comma delimited strings"
           <> showDefault
       )
     <*> ( flag
@@ -109,9 +139,22 @@ staticEnvOptParser =
                 <> help "Explicitly disable inlay hints. (Inlays enabled by default)"
             )
         )
-    <*> (maybe defaultStaticEnvOptions.inlayLengthCap id <$> Control.Applicative.optional readInlayLen)
+    <*> (fromMaybe defaultStaticEnvOptions.inlayLengthCap <$> Control.Applicative.optional readInlayLen)
+    <*> ( optionalWithDefault
+            ( strOption
+                ( long "fourmoluCommand"
+                    <> metavar "TARGET"
+                    <> help "Path to fourmolu binary"
+                )
+            )
+            defaultStaticEnvOptions.fourmoluCommand
+        )
     <*> switch (long "experimentalFeatures" <> help "Enable experimental features.")
  where
   -- Parse a list of comma delimited strings
   listOption = option $ eitherReader (either (Left . show) Right . runParser (sepEndBy (many alphaNum) (char ',')) () "")
   readInlayLen = (option ((readMaybe :: String -> Maybe Int) <$> str) $ long "maxInlayLength" <> help "Length to which inlay hints will be truncated.")
+  optionalWithDefault :: Parser a -> Maybe a -> Parser (Maybe a)
+  optionalWithDefault option def = do
+    mOpt <- Options.Applicative.optional option
+    pure (mOpt <|> def)
