@@ -205,10 +205,10 @@ serverDef options logger = do
       , -- TODO: Do handlers need to inspect clientCapabilities?
         staticHandlers = \_clientCapabilities ->
           mapHandlers goReq goNot $
-            mconcat
+            mconcat -- Currently there is just a slight hitch on saving
               ( [ handleInitialized
                 , handleChangeConfiguration
-                , handleTextDocumentHoverRequest
+                , handleTextDocumentHoverRequest -- Causes some slowdown, but this provides documentation. Not the main cause of the slowdowns
                 , handleDefinitionRequest
                 , handleTypeDefinitionRequest
                 , handleImplementationRequest
@@ -220,19 +220,19 @@ serverDef options logger = do
                 , handleDidChange
                 , handleDidSave
                 , handleDidClose
-                , handleWorkspaceSymbol
+                -- , handleWorkspaceSymbol -- Caused proabaly imperceptable slowdown. Not the main cause of the slowdowns
                 , handleSetTrace
-                , handleCodeAction
-                , handleResolveCodeAction
-                , handleDocumentSymbols
-                , handleCompletion
-                , handleCompletionItemResolve
+                -- , handleCodeAction -- Causes a lot of slowdown. Not the main cause of the slowdowns
+                -- , handleResolveCodeAction -- Causes a lot of slowdown. Not the main cause of the slowdowns
+                -- , handleDocumentSymbols -- Caused proabaly imperceptable slowdown. Not the main cause of the slowdowns
+                -- , handleCompletion -- Removed and still lots of slowdowns
+                -- , handleCompletionItemResolve -- Removed and still lots of slowdowns
                 ]
-                  <> (if options.provideInlays then [handleInlayHintRequest options, handleResolveInlayHint] else [])
-                  <> ( case options.fourmoluCommand of
-                        Just _ -> [handleFormat]
-                        Nothing -> []
-                     )
+                  -- <> (if options.provideInlays then [handleInlayHintRequest options, handleResolveInlayHint] else [])
+                  -- <> ( case options.fourmoluCommand of
+                  --       Just _ -> [handleFormat]
+                  --       Nothing -> []
+                  --    )
               )
       , interpretHandler = \env -> Iso (LSP.runLspT env) liftIO
       , options = lspOptions
